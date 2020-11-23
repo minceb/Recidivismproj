@@ -1,0 +1,424 @@
+---
+title: "Final Project"
+author: "Bowen Mince"
+date: "5/4/2020"
+output: html_document
+---
+Loading everything in
+```{r setup, include=FALSE}
+library(readr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(leaps)
+library(cowplot)
+library(corrplot)
+library(tree)
+library(randomForest)
+require(caret)
+library(pROC)
+CrimeDataTrain <- read_csv("D:/R STUFF/Final Data Science Project/CrimeDataTrain.csv")
+```
+
+#Cleaing the data a bit
+
+```{r}
+CrimeDataTrain <- select(
+  CrimeDataTrain, -first,-last,-dob,
+  -c_case_number, -c_arrest_date,-c_offense_date,
+  -c_charge_degree,-c_charge_desc,-r_case_number,
+  -r_charge_degree,-r_days_from_arrest,-r_offense_date,
+  -r_jail_in,-r_jail_out,-is_violent_recid,-vr_case_number,
+  -vr_charge_degree,-vr_offense_date,-vr_charge_desc,
+  -ARdegree_0,-ARdegree_CO3,-ARdegree_CT,-ARdegree_F1,
+  -ARdegree_F2,-ARdegree_F3,-ARdegree_F5,-ARdegree_F6,
+  -ARdegree_F7,-ARdegree_M1,-ARdegree_M2,-ARdegree_M3,
+  -ARdegree_MO3,-ARdegree_NI0,-ARdegree_TC4,-ARdegree_TCX,
+  -ARdegree_X,-ARdegree_XXX,-CFdegree_0,-CFdegree_CO3,
+  -CFdegree_CT)
+
+CrimeDataTrain <- mutate(CrimeDataTrain, daysinprison = ifelse(is.na(daysinprison), 0, daysinprison))
+CrimeDataTrain <- mutate(CrimeDataTrain, totalprison = ifelse(is.na(totalprison), 0, totalprison))
+CrimeDataTrain <- mutate(CrimeDataTrain, convicted = ifelse(totalprison > 0, 1, 0))
+CrimeDataTrain <- mutate(CrimeDataTrain, is_recid = as.factor(is_recid), sex = as.factor(sex), race = as.factor(race), marital =  as.factor(marital))
+CrimeDataTrain <- mutate(CrimeDataTrain, sex1 = ifelse(sex == "Male", 1, 0))
+CrimeDataTrain <- mutate(CrimeDataTrain, violent_charge = ifelse(Manslaughter > 0 | Officer > 0 | Physical > 0 | Weapon > 0, 1, 0))
+
+CrimeDataTrain <- mutate(CrimeDataTrain, Substance = ifelse(Drugs > 0 | Alcohol > 0 |  Type_Tobacco > 0, 1, 0))
+
+CrimeDataTrain <- filter(CrimeDataTrain, !is.na(in_date))
+CrimeDataTrain <- filter(CrimeDataTrain, !is.na(violent_charge))
+CrimeDataTrain <- filter(CrimeDataTrain, !is.na(Substance))
+
+CrimeDataTrain <- mutate(CrimeDataTrain, Felonies = CFdegree_F1 + CFdegree_F2 + + CFdegree_F3 + CFdegree_F5 + CFdegree_F6 + CFdegree_F7)
+
+CrimeDataTrain <- mutate(CrimeDataTrain, Misdomeaners = CFdegree_M1 + CFdegree_M2 + CFdegree_M3)
+
+
+CrimeDataTrain <- mutate(CrimeDataTrain, Juvenile_Charge = ifelse(juv_fel_count + juv_misd_count + juv_other_count > 0, 1, 0))
+CrimeDataTrain <- mutate(CrimeDataTrain, White = ifelse(race == "Caucasian", 1, 0))
+CrimeDataTrain <- mutate(CrimeDataTrain, Single = ifelse(marital == "Married" | marital == "Significant Other", 0, 1))
+class(CrimeDataTrain$convicted)
+```
+
+Viewing the data
+```{r}
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Juvenile_Charge, fill = is_recid))
+
+summary(CrimeDataTrain$Substance)
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = race, fill = is_recid), position = "fill")
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = convicted, fill = is_recid), position = "fill")
+# Here it seems that people who actually served prison time recidivised more often
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = age, fill = is_recid), position = "fill")
+
+#Here it seems that there is a general trend that as you get older, the less likely you are to recidivise.
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Substance, fill = is_recid))
+
+#Here it also seems that people who commit crimes that involve some substance result in higher recidivism. We should look into this closer as this just groups Drugs, Alcohol, and Marijuana into one category.
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = sex, fill = is_recid), position = "fill")
+
+#Interesting graph showing race with sex
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = violent_charge, fill = is_recid), position = "fill") + 
+  facet_wrap(~sex)
+
+#Interesting graph showing violent charge with sex
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Substance, fill = is_recid), position = "fill") + 
+   labs(x = "Had Substance Charges", y = "Percentage", fill = "Recidivism") + 
+    scale_fill_discrete(labels = c("No", "Yes")) +
+  facet_wrap(~sex) + 
+  theme_minimal()
+
+#Show substance facet by sex
+
+ggplot(data = CrimeDataTrain) + 
+  geom_histogram(aes(x = arrests, fill = is_recid), position = "fill") + 
+  facet_wrap(~sex)
+
+#Shows arrests facet by sex
+
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Juvenile_Charge, fill = is_recid), position = "fill") + 
+  labs(x = "Had Juvenile Charges", y = "Percentage", fill = "Recidivism") + 
+    scale_fill_discrete(labels = c("No", "Yes")) +
+      facet_wrap(~sex) + 
+      theme_minimal()
+
+
+#Shows juvenile Charge factored with sex.It seems for both, if there is a juvenile charge of some sort, you are more likely to recidivise.
+
+ggplot(data = CrimeDataTrain) + 
+  geom_histogram(aes(x = Felonies, fill = is_recid), position = "fill") 
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_histogram(aes(x = Misdomeaners, fill = is_recid))
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = marital, fill = is_recid)) 
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = priors, fill = is_recid), position = "fill")
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = charges, fill = is_recid), position = "fill")
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = race, fill = as.factor(Juvenile_Charge)), position = "fill") + 
+    labs(x = "Race", y = "Percentage", fill = "Had a Juvenile Charge") + 
+    scale_fill_discrete(labels = c("No", "Yes")) +
+      theme_minimal()
+  
+```
+Starting to create an analysis
+
+```{r}
+set.seed(123)
+traincrime <- sample(1:nrow(CrimeDataTrain), 6000)
+data.train <- (CrimeDataTrain[traincrime,])
+data.test <- (CrimeDataTrain[-traincrime,])
+
+
+
+```
+
+
+```{r}
+
+# tree1 <- tree(is_recid ~ Juvenile_Charge + priors + convicted + arrests + charges + age + Substance + sex + days_in_jail + total_jail + daysinprison + totalprison + Fraud + Murder + Manslaughter + Officer + Physical + Sex + Weapon + Alcohol + Burglary + Disrupt + Drugs + marital + race, data.train)
+# plot(tree1)
+# text(tree1)
+forestall <- randomForest(is_recid ~ Juvenile_Charge + priors + convicted + arrests + charges + age + Substance + sex + days_in_jail + total_jail + daysinprison + totalprison + Fraud + Murder + Manslaughter + Officer + Physical + Sex + Weapon + Alcohol + Burglary + Disrupt + Drugs + marital + race, data.train, importance=TRUE, ntree=100, mtry = 10, do.trace=TRUE)
+
+
+forest.pred <- predict(forestall, data.train)
+
+table(observed = data.train$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forestall, data.train, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.train$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.train$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+
+
+
+forest.pred <- predict(forestall, data.test)
+
+
+table(observed = data.test$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forestall, data.test, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.test$is_recid, forest.pred.prob[,1])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "Prediction on recidivism")
+table(observed = data.test$is_recid, predicted = forest.pred.prob[,1])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+```
+
+```{r}
+ forest1 <- randomForest(is_recid ~ Juvenile_Charge + priors + convicted + arrests + charges + age + Substance + sex, data = data.train, importance=TRUE, ntree=100, mtry = 4, do.trace=TRUE) 
+forest1
+
+
+forest.pred <- predict(forest1, data.train)
+
+table(observed = data.train$is_recid, predicted = forest.pred)
+?predict
+
+forest.pred.prob <- predict(forest1, data.train, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.train$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.train$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+
+
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.325, 1, 0)
+
+table(predict = forest.predthresh, observed = data.train$is_recid)
+
+
+
+forest.pred <- predict(forest1, data.test)
+
+
+table(observed = data.test$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forest1, data.test, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.test$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.test$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+summary(data.train$is_recid)
+
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.315, 1, 0)
+
+table(observed = data.test$is_recid, predict = forest.predthresh)
+```
+
+
+
+
+
+Splitting based on White and non_white
+
+```{r}
+
+
+data.testwhite <- filter(data.test, White == 1)
+data.testNonWhite <- filter(data.test, White == 0)
+
+
+forest.pred <- predict(forest1, data.testwhite, type = "class")
+
+
+table(observed = data.testwhite$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forest1, data.testwhite, type="prob")
+table(observed = data.testwhite$is_recid, predicted = forest.pred.prob[,2])
+# Draw ROC curve
+result.roc <- roc(data.testwhite$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.305, 1, 0)
+
+table(observed = data.testwhite$is_recid, predict = forest.predthresh)
+
+
+
+forest.pred <- predict(forest1, data.testNonWhite, type = "class")
+
+
+table(observed = data.testNonWhite$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forest1, data.testNonWhite, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.testNonWhite$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.testNonWhite$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.355, 1, 0)
+
+table(observed = data.testNonWhite$is_recid, predict = forest.predthresh)
+
+
+
+```
+
+
+
+```{r}
+TrainLogit <- glm(is_recid ~ Juvenile_Charge + priors + charges + arrests + age + convicted + Substance + sex, data = data.train, family = "binomial")
+
+summary(TrainLogit)
+
+```
+
+```{r}
+
+train.pred <- predict(TrainLogit, data.test)
+
+train.pred1 <- ifelse(train.pred > 0.5, 1, 0)
+
+confu2 <- table(data.test$is_recid, train.pred1)
+
+addmargins(confu2)
+
+```
+
+```{r}
+
+trainlogit.pred <- predict(TrainLogit, data.train)
+
+trainlogit.pred1 <- ifelse(trainlogit.pred > 0.5, 1, 0)
+
+confu2 <- table(data.train$is_recid, trainlogit.pred1)
+
+addmargins(confu2)
+
+```
+
+```{r}
+
+roc.1 <- roc(data.test$is_recid, train.pred, plot=TRUE, legacy.axes=TRUE, main = "Prediction on recidivism", xlab="False Positive Percentage", ylab="True Positive Percentage", print.auc=TRUE)
+
+```
+
+```{r}
+
+roc.df <- data.frame(
+
+TPP=roc.1$sensitivities*100, ## TPP = true positive percentage
+
+FPP=(1 - roc.1$specificities)*100, ## FPP = false positive precentage
+
+thresholds=roc.1$thresholds)
+
+roc.df
+
+```
+
+```{r}
+
+plot(roc.1, print.thres="best", print.thres.best.method="closest.topleft", main = "Prediction on recidivism")
+
+```
+
+```{r}
+
+roc.2 <- roc(data.train$is_recid, trainlogit.pred, plot=TRUE, legacy.axes=TRUE, main = "Figure 4", xlab="False Positive Percentage", ylab="True Positive Percentage", print.auc=TRUE)
+
+```
+
+```{r}
+
+roc.df2 <- data.frame(
+
+TPP=roc.2$sensitivities*100, ## TPP = true positive percentage
+
+FPP=(1 - roc.2$specificities)*100, ## FPP = false positive precentage
+
+thresholds=roc.2$thresholds)
+
+roc.df2
+
+```
+
+```{r}
+
+plot(roc.2, print.thres="best", print.thres.best.method="closest.topleft", main = "Prediction on recidivism")
+
+```
+
+```{r}
+
+train.pred5 <- predict(TrainLogit, data.test)
+
+train.pred6 <- ifelse(train.pred5 > -0.653, 1, 0)
+
+confu2 <- table(data.test$is_recid, train.pred6)
+
+addmargins(confu2)
+
+trainlogit.pred7 <- predict(TrainLogit, data.train)
+
+trainlogit.pred8 <- ifelse(trainlogit.pred7 > -0.639, 1, 0)
+
+confu3 <- table(data.train$is_recid, trainlogit.pred1)
+
+addmargins(confu3)
+
+```
