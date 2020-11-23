@@ -1,0 +1,450 @@
+---
+title: "Final Project"
+author: "Bowen Mince"
+date: "5/4/2020"
+output: html_document
+---
+Loading everything in
+```{r setup, include=FALSE}
+library(readr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(leaps)
+library(cowplot)
+library(corrplot)
+library(tree)
+library(randomForest)
+require(caret)
+library(pROC)
+CrimeDataTrain <- read_csv("D:/R STUFF/Final Data Science Project/CrimeDataTrain.csv")
+```
+
+#Cleaing the data and making changes to it.
+
+```{r}
+# We decided to get rid of variables that were redundant (like first and las)
+CrimeDataTrain <- select(
+  CrimeDataTrain, -first,-last,-dob,
+  -c_case_number, -c_arrest_date,-c_offense_date,
+  -c_charge_degree,-c_charge_desc,-r_case_number,
+  -r_charge_degree,-r_days_from_arrest,-r_offense_date,
+  -r_jail_in,-r_jail_out,-is_violent_recid,-vr_case_number,
+  -vr_charge_degree,-vr_offense_date,-vr_charge_desc,
+  -ARdegree_0,-ARdegree_CO3,-ARdegree_CT,-ARdegree_F1,
+  -ARdegree_F2,-ARdegree_F3,-ARdegree_F5,-ARdegree_F6,
+  -ARdegree_F7,-ARdegree_M1,-ARdegree_M2,-ARdegree_M3,
+  -ARdegree_MO3,-ARdegree_NI0,-ARdegree_TC4,-ARdegree_TCX,
+  -ARdegree_X,-ARdegree_XXX,-CFdegree_0,-CFdegree_CO3,
+  -CFdegree_CT)
+
+# Here we created many binary variables based on existing variables
+
+
+# Turns observations where they had NA in daysinprison column into a 0.
+CrimeDataTrain <- mutate(CrimeDataTrain, daysinprison = ifelse(is.na(daysinprison), 0, daysinprison))
+# Turns observations where they had NA in totalprison column into a 0.
+CrimeDataTrain <- mutate(CrimeDataTrain, totalprison = ifelse(is.na(totalprison), 0, totalprison))
+# Creates a variable convicted that sees if they spent any time in prison.
+CrimeDataTrain <- mutate(CrimeDataTrain, convicted = ifelse(totalprison > 0, 1, 0))
+# This turns the variables is_recid, sex, race, and marital status into categorical variables.
+CrimeDataTrain <- mutate(CrimeDataTrain, is_recid = as.factor(is_recid), sex = as.factor(sex), race = as.factor(race), marital =  as.factor(marital))
+
+# Creates a new sex variable where 1 corresponds to male and 0 for female.
+CrimeDataTrain <- mutate(CrimeDataTrain, sex1 = ifelse(sex == "Male", 1, 0))
+# Creates a variable violent_charge that says whether or not the individual was charged with a violent crime.
+CrimeDataTrain <- mutate(CrimeDataTrain, violent_charge = ifelse(Manslaughter > 0 | Officer > 0 | Physical > 0 | Weapon > 0, 1, 0))
+
+# Creates a variable substance that says whether or not an individual was charged with any substance
+CrimeDataTrain <- mutate(CrimeDataTrain, Substance = ifelse(Drugs > 0 | Alcohol > 0 |  Type_Tobacco > 0, 1, 0))
+
+# These series of commands removes observations that have limited info about their charge.
+CrimeDataTrain <- filter(CrimeDataTrain, !is.na(in_date))
+CrimeDataTrain <- filter(CrimeDataTrain, !is.na(violent_charge))
+CrimeDataTrain <- filter(CrimeDataTrain, !is.na(Substance))
+
+# Creates a felonies variable that tallies up how many felonies an individual was charged with 
+CrimeDataTrain <- mutate(CrimeDataTrain, Felonies = CFdegree_F1 + CFdegree_F2 + + CFdegree_F3 + CFdegree_F5 + CFdegree_F6 + CFdegree_F7)
+
+# Creates a misdemeanor variable that tallies up how many misdemeanors an individual was charged with.
+CrimeDataTrain <- mutate(CrimeDataTrain, Misdomeaners = CFdegree_M1 + CFdegree_M2 + CFdegree_M3)
+
+# Creates a juvenile variable to tells whether the individual has hany juvenile charges
+CrimeDataTrain <- mutate(CrimeDataTrain, Juvenile_Charge = ifelse(juv_fel_count + juv_misd_count + juv_other_count > 0, 1, 0))
+# Creates a white variable that tells if the individual is white or not.
+CrimeDataTrain <- mutate(CrimeDataTrain, White = ifelse(race == "Caucasian", 1, 0))
+# Creates a single variable to see if the individual is single or not
+CrimeDataTrain <- mutate(CrimeDataTrain, Single = ifelse(marital == "Married" | marital == "Significant Other", 0, 1))
+
+```
+
+## Viewing the data
+```{r}
+# These graphs show relationships between certain variables and recidvism. Pay close attention to juevnile charge, substance, sex, and age.
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Juvenile_Charge, fill = is_recid), position = "fill")
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = race, fill = is_recid), position = "fill")
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = convicted, fill = is_recid), position = "fill")
+# Here it seems that people who actually served prison time recidivised more often
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = age, fill = is_recid), position = "fill")
+
+#Here it seems that there is a general trend that as you get older, the less likely you are to recidivise.
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Substance, fill = is_recid))
+
+#Here it also seems that people who commit crimes that involve some substance result in higher recidivism. We should look into this closer as this just groups Drugs, Alcohol, and Marijuana into one category.
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = sex, fill = is_recid), position = "fill")
+
+#Interesting graph showing race with sex
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = violent_charge, fill = is_recid), position = "fill") + 
+  facet_wrap(~sex)
+
+#Interesting graph showing violent charge with sex
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Substance, fill = is_recid), position = "fill") + 
+   labs(x = "Had Substance Charges", y = "Percentage", fill = "Recidivism") + 
+    scale_fill_discrete(labels = c("No", "Yes")) +
+  facet_wrap(~sex) + 
+  theme_minimal()
+
+#Show substance facet by sex
+
+ggplot(data = CrimeDataTrain) + 
+  geom_histogram(aes(x = arrests, fill = is_recid), position = "fill") + 
+  facet_wrap(~sex)
+
+#Shows arrests facet by sex
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = Juvenile_Charge, fill = is_recid), position = "fill") + 
+  labs(x = "Had Juvenile Charges", y = "Percentage", fill = "Recidivism") + 
+    scale_fill_discrete(labels = c("No", "Yes")) +
+      facet_wrap(~sex) + 
+      theme_minimal()
+
+
+#Shows juvenile Charge factored with sex.It seems for both, if there is a juvenile charge of some sort, you are more likely to recidivise.
+
+ggplot(data = CrimeDataTrain) + 
+  geom_histogram(aes(x = Felonies, fill = is_recid), position = "fill") 
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_histogram(aes(x = Misdomeaners, fill = is_recid))
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = marital, fill = is_recid), position = "fill") 
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = priors, fill = is_recid), position = "fill")
+
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = charges, fill = is_recid), position = "fill")
+
+ggplot(data = CrimeDataTrain) + 
+  geom_bar(aes(x = race, fill = as.factor(Juvenile_Charge)), position = "fill") + 
+    labs(x = "Race", y = "Percentage", fill = "Had a Juvenile Charge") + 
+    scale_fill_discrete(labels = c("No", "Yes")) +
+      theme_minimal()
+  
+```
+## Starting to create an analysis
+
+```{r}
+# This code take 6000 individuals from the dataset to be known as the training dataset while the others is the testing dataset.
+set.seed(123)
+traincrime <- sample(1:nrow(CrimeDataTrain), 6000)
+data.train <- (CrimeDataTrain[traincrime,])
+data.test <- (CrimeDataTrain[-traincrime,])
+
+
+
+```
+
+
+```{r}
+
+ #tree1 <- tree(is_recid ~ Juvenile_Charge + priors + convicted + arrests + charges + age + Substance + sex + days_in_jail + total_jail + daysinprison + totalprison + Fraud + Murder + Manslaughter + Officer + Physical + Sex + Weapon + Alcohol + Burglary + Disrupt + Drugs + marital + race, data.train)
+#plot(tree1)
+ #text(tree1)
+
+
+
+# So the first thing we did is create a random forest with 100 trees and randomly selecting 10 variables from all the variables in the dataset.
+forestall <- randomForest(is_recid ~ Juvenile_Charge + priors + convicted + arrests + charges + age + Substance + sex + days_in_jail + total_jail + daysinprison + totalprison + Fraud + Murder + Manslaughter + Officer + Physical + Sex + Weapon + Alcohol + Burglary + Disrupt + Drugs + marital + race, data.train, importance=TRUE, ntree=100, mtry = 10, do.trace=TRUE)
+
+# This then uses the forest to predict all the values in the training dataset.
+forest.pred <- predict(forestall, data.train)
+
+# Creates a matrix showing how accurate the forest is in predicting the training dataset that it was modeled
+table(observed = data.train$is_recid, predicted = forest.pred)
+
+
+# Creating an ROC curve
+forest.pred.prob <- predict(forestall, data.train, type="prob")
+
+result.roc <- roc(data.train$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "Prediction on recidivism with the forestall model on the training dataset")
+table(observed = data.train$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+# Now, lets see how well the forest predicts the testing dataset.
+forest.pred <- predict(forestall, data.test)
+
+
+table(observed = data.test$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forestall, data.test, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.test$is_recid, forest.pred.prob[,1])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "Prediction on recidivism with the forestall model on the testing dataset")
+table(observed = data.test$is_recid, predicted = forest.pred.prob[,1])
+
+auc(result.roc)
+
+# With using all the variables, we can overfit the data very heavily. Also with many variables, the model is not simplistic and may not be the best model. The model also includes race in it which could make the model racist can cause ethical concerns.
+```
+
+```{r}
+# Based on our visuals above and through trial and error, we came up with this forest model that creates 100 trees that picks 4 random variables each iteration from the list of Juvenile_Charge, prios, convicted, # of arrests, # number of charges, age, Substance, and sex
+ forest1 <- randomForest(is_recid ~ Juvenile_Charge + priors + convicted + arrests + charges + age + Substance + sex, data = data.train, importance=TRUE, ntree=100, mtry = 4, do.trace=TRUE) 
+forest1
+
+# Go through the same procedures as we did before.
+forest.pred <- predict(forest1, data.train)
+
+table(observed = data.train$is_recid, predicted = forest.pred)
+?predict
+
+forest.pred.prob <- predict(forest1, data.train, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.train$is_recid, forest.pred.prob[,2])
+
+#We will then take the best threshold in terms of accuracy and then create a confusion matrix
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.train$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+
+#Creating our confusion matrix based on a threshold
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.305, 1, 0)
+
+table(predict = forest.predthresh, observed = data.train$is_recid)
+
+
+#Now lets use our model on the testing dataset
+forest.pred <- predict(forest1, data.test)
+
+# Create a confusion matrix (using a 50% threshold)
+table(observed = data.test$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forest1, data.test, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.test$is_recid, forest.pred.prob[,2])
+# Find the best threshold for this.
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.test$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+summary(data.train$is_recid)
+
+
+#Create a confusion matrix using this threshold
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.315, 1, 0)
+
+table(observed = data.test$is_recid, predict = forest.predthresh)
+
+# This forest model still overfits the training dataset but not as much as the previous forest model. And it is on par with that model with predicting recidivism on the testing dataset.
+```
+
+
+
+
+
+Splitting based on White and non_white
+
+```{r}
+#This part is to see if our model predicts whites and nonwhites to recidivise differently.
+# https://www.propublica.org/article/how-we-analyzed-the-compas-recidivism-algorithm.
+#This article shows how scores with black defendants tend to be higher than white defendants.
+
+#Separate the testing dataset into white individuals and non-white individuals
+data.testwhite <- filter(data.test, White == 1)
+data.testNonWhite <- filter(data.test, White == 0)
+
+# There were 663 observations in the white dataset and 1156 individuals in the non-white dataset
+
+forest.pred <- predict(forest1, data.testwhite, type = "class")
+
+
+table(observed = data.testwhite$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forest1, data.testwhite, type="prob")
+table(observed = data.testwhite$is_recid, predicted = forest.pred.prob[,2])
+# Draw ROC curve
+result.roc <- roc(data.testwhite$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.275, 1, 0)
+
+table(observed = data.testwhite$is_recid, predict = forest.predthresh)
+
+
+
+forest.pred <- predict(forest1, data.testNonWhite, type = "class")
+
+
+table(observed = data.testNonWhite$is_recid, predicted = forest.pred)
+
+
+forest.pred.prob <- predict(forest1, data.testNonWhite, type="prob")
+# Draw ROC curve
+result.roc <- roc(data.testNonWhite$is_recid, forest.pred.prob[,2])
+
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft", main = "prediction on recidivism")
+table(observed = data.testNonWhite$is_recid, predicted = forest.pred.prob[,2])
+# table(data.train$is_recid)
+# str(crime.pred.prob)
+auc(result.roc)
+
+
+forest.predthresh <- ifelse(forest.pred.prob[,2] > 0.355, 1, 0)
+
+table(observed = data.testNonWhite$is_recid, predict = forest.predthresh)
+
+# So the forest model more accurately predicted the nonwhite dataset vs the white dataset. Moreover, the forest model had a higher specificty with the nonwhite dataset compared to the white dataset, meaning there were fewer false positives propotionally with the nonwhite dataset than the white dataset
+
+```
+
+
+
+```{r}
+# Now after looking at forests, we decided to create a logistic model and see if it would outperform our forest model. 
+# The logistic model had the same variables as the forest model.
+TrainLogit <- glm(is_recid ~ Juvenile_Charge + priors + charges + arrests + age + convicted + Substance + sex, data = data.train, family = "binomial")
+
+summary(TrainLogit)
+
+```
+
+```{r}
+# See how the model predicts the training dataset with a 50% threshold.
+
+trainlogit.pred <- predict(TrainLogit, data.train)
+
+trainlogit.pred1 <- ifelse(trainlogit.pred > 0.5, 1, 0)
+
+confu2 <- table(data.train$is_recid, trainlogit.pred1)
+
+addmargins(confu2)
+
+
+```
+
+```{r}
+# See how the model predicts the testing dataset with a 50% threshold.
+train.pred <- predict(TrainLogit, data.test)
+
+train.pred1 <- ifelse(train.pred > 0.5, 1, 0)
+
+confu2 <- table(data.test$is_recid, train.pred1)
+
+addmargins(confu2)
+
+```
+
+```{r}
+# Make an ROC curve to visualize how good our model is with the testing dataset.
+roc.1 <- roc(data.test$is_recid, train.pred, plot=TRUE, legacy.axes=TRUE, main = "Prediction on recidivism", xlab="False Positive Percentage", ylab="True Positive Percentage", print.auc=TRUE)
+
+```
+
+```{r}
+## Creates a table of what different thresholds would do to the true positive percentage and the false positive percentage
+roc.df <- data.frame(
+
+TPP=roc.1$sensitivities*100, ## TPP = true positive percentage
+
+FPP=(1 - roc.1$specificities)*100, ## FPP = false positive precentage
+
+thresholds=roc.1$thresholds)
+
+roc.df
+
+```
+
+
+```{r}
+# Creates and AUC curve for the training dataset
+
+roc.2 <- roc(data.train$is_recid, print.thres = "best", trainlogit.pred, plot=TRUE, legacy.axes=TRUE, main = "Figure 4", xlab="False Positive Percentage", ylab="True Positive Percentage", print.auc=TRUE)
+
+```
+
+```{r}
+
+roc.df2 <- data.frame(
+
+TPP=roc.2$sensitivities*100, ## TPP = true positive percentage
+
+FPP=(1 - roc.2$specificities)*100, ## FPP = false positive precentage
+
+thresholds=roc.2$thresholds)
+
+roc.df2
+
+```
+
+
+```{r}
+# Used the optimal thresholds for both the training and the testing dataset to seeing how the confusion matrices look 
+train.pred5 <- predict(TrainLogit, data.test)
+
+train.pred6 <- ifelse(train.pred5 > -0.653, 1, 0)
+# confusion matrix for the testing dataset
+confu2 <- table(data.test$is_recid, train.pred6)
+
+addmargins(confu2)
+
+trainlogit.pred7 <- predict(TrainLogit, data.train)
+
+trainlogit.pred8 <- ifelse(trainlogit.pred7 > -0.639, 1, 0)
+# confusion matrix for the training dataset
+confu3 <- table(data.train$is_recid, trainlogit.pred1)
+
+addmargins(confu3)
+
+```
